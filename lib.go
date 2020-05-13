@@ -282,15 +282,15 @@ func searchInTube(server string, tube string, limit int, searchStr string, state
 	}
 
 	// Get ready stat job total
-	var cnt int
 
+	var totalInReady int
 	defer func() {
 		bstkTube := &beanstalk.Tube{
 			Conn: bstkConn,
 			Name: tube,
 		}
 		// search is done, release all jobs
-		if _, err = bstkTube.Kick(cnt); err != nil {
+		if _, err = bstkTube.Kick(totalInReady); err != nil {
 			log.Printf("failed to kick jobs: %s", err)
 		}
 
@@ -299,6 +299,7 @@ func searchInTube(server string, tube string, limit int, searchStr string, state
 	}()
 
 	bstkTubeSet := beanstalk.NewTubeSet(bstkConn, tube)
+	var cnt int
 	for {
 		if cnt >= limit {
 			break
@@ -310,6 +311,8 @@ func searchInTube(server string, tube string, limit int, searchStr string, state
 			log.Printf("error during search in tube: %s\n", err)
 			break
 		}
+		totalInReady++
+		
 		if ret != nil {
 			ret.Server = server
 			result = append(result, *ret)
@@ -392,14 +395,17 @@ func searchTubeInStats(tube, searchStr, stat string, bstkConn *beanstalk.Conn, i
 }
 
 func inTubeSearch(searchStr, stat string, bstTubeSet *beanstalk.TubeSet) (*SearchResult,error) {
-	id, readyBody, err := bstTubeSet.Reserve(5 * time.Second)
+	id, readyBody, err := bstTubeSet.Reserve(1 * time.Second)
 	if err != nil {
+		return nil, err
+	}
+	if err := bstTubeSet.Conn.Bury(id, 10); err != nil {
 		return nil, err
 	}
 
 	body := string(readyBody)
 	if !strings.Contains(body, searchStr) {
-		return nil, bstTubeSet.Conn.Bury(id, 10)
+		return nil, nil
 	}
 
 	return &SearchResult{
