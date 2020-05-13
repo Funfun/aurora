@@ -194,9 +194,10 @@ type SelfConf struct {
 
 // SearchResult define the search result of jobs in tube.
 type SearchResult struct {
-	ID    uint64
-	State string
-	Data  string
+	ID     uint64
+	State  string
+	Data   string
+	Server string
 }
 
 // UpdateTags define the tag of versions control.

@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -53,6 +54,11 @@ func main() {
 	http.HandleFunc("/tube", basicAuth(handlerTube))
 	http.HandleFunc("/sample", basicAuth(handlerSample))
 	http.HandleFunc("/statistics", basicAuth(handlerStatistics))
+
+	// MessageBird modification
+	http.HandleFunc("/user", basicAuth(handlerSMPPUser))
+	http.HandleFunc("/search", basicAuth(handlerSMPPSearch))
+
 	go func() {
 		err = http.ListenAndServe(pubConf.Listen, nil)
 		if err != nil {
@@ -61,7 +67,12 @@ func main() {
 		}
 	}()
 	go statistic()
-	openPage()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ProcessSearchJob(ctx)
+
+	//openPage()
 	handleSignals()
 }
 

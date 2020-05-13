@@ -23,11 +23,11 @@ import (
 func currentTubeSearchResults(server string, tube string, limit string, searchStr string, result []SearchResult) string {
 	var buf, tr strings.Builder
 	if len(result) == 0 {
-		buf.WriteString(`<br/>No results found for <b>`)
+		buf.WriteString(`<tr colspan=3><td>No results found for <b>`)
 		buf.WriteString(html.EscapeString(searchStr))
 		buf.WriteString(`</b> in tube: <b>`)
 		buf.WriteString(tube)
-		buf.WriteString(`</b>`)
+		buf.WriteString(`</td></tr>`)
 		return buf.String()
 	}
 	for k, job := range result {
@@ -44,19 +44,19 @@ func currentTubeSearchResults(server string, tube string, limit string, searchSt
 		tr.WriteString(`"><li role="presentation"><a role="menuitem" class="addSample" data-jobid="`)
 		tr.WriteString(strconv.Itoa(int(job.ID)))
 		tr.WriteString(`" href="?server=`)
-		tr.WriteString(server)
+		tr.WriteString(job.Server)
 		tr.WriteString(`&tube=`)
 		tr.WriteString(url.QueryEscape(tube))
-		tr.WriteString(`&action=addSample"><i class="glyphicon glyphicon-plus glyphicon-white"></i> Add to samples </a></li><li role="presentation"><a role="menuitem" href="?server=`)
-		tr.WriteString(server)
+		tr.WriteString(`&action=addSample"><i class="glyphicon glyphicon-plus glyphicon-white"></i> Add to samples </a></li><li role="presentation"><a role="menuitem" href="/tube?server=`)
+		tr.WriteString(job.Server)
 		tr.WriteString(`&tube=`)
 		tr.WriteString(url.QueryEscape(tube))
 		tr.WriteString(`&state=`)
 		tr.WriteString(job.State)
 		tr.WriteString(`&action=deleteJob&jobid=`)
 		tr.WriteString(strconv.Itoa(int(job.ID)))
-		tr.WriteString(`"><i class="glyphicon glyphicon-remove glyphicon-white"></i> Delete</a> </li><li role="presentation"><a role="menuitem" href="?server=`)
-		tr.WriteString(server)
+		tr.WriteString(`"><i class="glyphicon glyphicon-remove glyphicon-white"></i> Delete</a> </li><li role="presentation"><a role="menuitem" href="/tube?server=`)
+		tr.WriteString(job.Server)
 		tr.WriteString(`&tube=`)
 		tr.WriteString(url.QueryEscape(tube))
 		tr.WriteString(`&state=`)
@@ -65,11 +65,15 @@ func currentTubeSearchResults(server string, tube string, limit string, searchSt
 		tr.WriteString(strconv.Itoa(int(job.ID)))
 		tr.WriteString(`"><i class="glyphicon glyphicon-forward glyphicon-white"></i> Kick </a></li></ul></div></td></tr>`)
 	}
-	buf.WriteString(`<section id="actionsRow"><a class="btn btn-default btn-sm" href="?server=`)
-	buf.WriteString(server)
-	buf.WriteString(`&tube=`)
-	buf.WriteString(url.QueryEscape(tube))
-	buf.WriteString(`"><i class="glyphicon glyphicon-backward"></i>  &nbsp;Back to tube</a></section><section id="searchResult"><div class="row"><div class="col-sm-12"><table class="table table-striped table-hover" style="table-layout:fixed;"><thead><tr><th class="col-md-1">id</th><th class="col-md-1">state</th><th>data</th><th class="col-md-1">action</th></tr></thead><tbody>`)
+	if server != "" {
+		buf.WriteString(`<section id="actionsRow"><a class="btn btn-default btn-sm" href="/tube?server=`)
+		buf.WriteString(server)
+		buf.WriteString(`&tube=`)
+		buf.WriteString(url.QueryEscape(tube))
+		buf.WriteString(`"><i class="glyphicon glyphicon-backward"></i>  &nbsp;Back to tube</a></section>`)
+	}
+
+	buf.WriteString(`<section id="searchResult"><h4>Results</h4><div class="row"><div class="col-sm-12"><table class="table table-striped table-hover" style="table-layout:fixed;"><thead><tr><th class="col-md-1">id</th><th class="col-md-1">state</th><th>data</th><th class="col-md-1">action</th></tr></thead><tbody>`)
 	buf.WriteString(tr.String())
 	buf.WriteString(`</tbody></table></div></div>First `)
 	buf.WriteString(limit)

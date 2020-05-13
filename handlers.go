@@ -12,10 +12,17 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // handlerMain handle request on router: /
@@ -192,4 +199,178 @@ func handlerStatistics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = io.WriteString(w, tplStatistic(server, tube))
+}
+
+func handlerSMPPUser(w http.ResponseWriter, r *http.Request) {
+	setHeader(w, r)
+	readCookies(r)
+
+	userID := r.URL.Query().Get("user_id")
+
+	_, _ = io.WriteString(w, tplSMPPUser(userID))
+
+}
+
+func handlerSMPPSearch(w http.ResponseWriter, r *http.Request) {
+	setHeader(w, r)
+	readCookies(r)
+
+	switch r.Method {
+	case http.MethodPost:
+		var jobID string
+		var err error
+		var searchLimit int
+		searchLimit, err = strconv.Atoi(r.PostFormValue("limit"))
+		if err != nil {
+			_, _ = io.WriteString(w, fmt.Sprintf("error: %s", err))
+			return
+		}
+		userID := r.PostFormValue("user_id")
+
+		// check if queue exists
+		if !UserTubeExist(userID) {
+			_, _ = io.WriteString(w, fmt.Sprintf("tube for user %s does not exist", userID))
+			return
+		}
+
+		if jobID, err = EnqueueSearchJob(r.PostFormValue("user_id"), r.PostFormValue("state"), r.PostFormValue("searchStr"), searchLimit); err != nil {
+			_, _ = io.WriteString(w, fmt.Sprintf("error: %s", err))
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/search?job_id=%s", jobID), http.StatusSeeOther)
+		return
+	case http.MethodGet:
+		buf := strings.Builder{}
+		buf.WriteString(TplHeaderBegin)
+		buf.WriteString(TplHeaderEnd)
+		buf.WriteString(TplNoScript)
+		buf.WriteString(`<div class="navbar navbar-fixed-top navbar-default" role="navigation"><div class="container"><div class="navbar-header"><button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse"><span class="sr-only">Toggle navigation</span><span class="icon-bar"></span><span class="icon-bar"></span><span class="icon-bar"></span></button><a class="navbar-brand" href="./">Beanstalkd console</a></div><div class="collapse navbar-collapse"><ul class="nav navbar-nav">`)
+		buf.WriteString(dropDownServer(""))
+		buf.WriteString(`</ul><ul class="nav navbar-nav navbar-right"><li class="dropdown"><a href="#" class="dropdown-toggle" data-toggle="dropdown">Toolbox <span class="caret"></span></a><ul class="dropdown-menu"><li><a href="#filter" role="button" data-toggle="modal">Filter columns</a></li><li><a href="./sample?action=manageSamples" role="button">Manage samples</a></li><li><a href="./statistics?action=preference" role="button">Statistics preference</a></li><li class="divider"></li><li><a href="#settings" role="button" data-toggle="modal">Edit settings</a></li></ul></li>`)
+		buf.WriteString(TplLinks)
+		buf.WriteString(`</div></div></div><div class="container">`)
+
+		jobID := r.URL.Query().Get("job_id")
+		if jobID == "" {
+			buf.WriteString(`<table class='table table-striped table-hover'>`)
+			for jobID, results := range searchResults {
+				buf.WriteString(fmt.Sprintf("<tr><td><a href='/search?job_id=%s'>job #ID: %s</a></td><td>%s</td></tr>", jobID, jobID, results.Status))
+			}
+			buf.WriteString(`</table></div>`)
+		} else {
+			if results, ok := searchResults[jobID]; ok {
+				buf.WriteString(`<table class='table table-striped table-hover'>`)
+				buf.WriteString(fmt.Sprintf("<tr><td>ID#%s</td><td>Status: %s</td><td>Created at: %s</td></tr>", results.ID, results.Status, results.CreatedAt.Format(time.UnixDate)))
+				buf.WriteString(`</table>`)
+				buf.WriteString(tplSearchResultView(currentTubeSearchResults("", results.Tube, "1", results.Query, results.Result), "", results.Tube))
+			} else {
+				buf.WriteString(fmt.Sprintf("<p>jobID %s not found</p>", jobID))
+			}
+		}
+
+		_, _ = io.WriteString(w, buf.String())
+	}
+}
+
+
+func tplSearchResultView(content string, server string, tube string) string {
+	var isDisabledJobDataHighlight string
+	if selfConf.IsDisabledJobDataHighlight != 1 {
+		isDisabledJobDataHighlight = `<script src="./highlight/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script>`
+	}
+	buf := strings.Builder{}
+	buf.WriteString(content)
+	buf.WriteString(modalAddJob(tube))
+	buf.WriteString(modalAddSample(server, tube))
+	buf.WriteString(`<div id="idAllTubesCopy" style="display:none"></div>`)
+	buf.WriteString(tplTubeFilter())
+	buf.WriteString(dropEditSettings())
+	buf.WriteString(`</div><script>function getParameterByName(name,url){if(!url){url=window.location.href}name=name.replace(/[\[\]]/g,"\\$&");var regex=new RegExp("[?&]"+name+"(=([^&#]*)|&|#|$)"),results=regex.exec(url);if(!results){return null}if(!results[2]){return""}return decodeURIComponent(results[2].replace(/\+/g," "))}var url="./tube?server="+getParameterByName("server");var contentType="";</script><script src='./assets/vendor/jquery/jquery.js'></script><script src="./js/jquery.color.js"></script><script src="./js/jquery.cookie.js"></script><script src="./js/jquery.regexp.js"></script><script src="./assets/vendor/bootstrap/js/bootstrap.min.js"></script>`)
+	buf.WriteString(isDisabledJobDataHighlight)
+	buf.WriteString(`<script src="./js/customer.js"></script></body></html>`)
+	return buf.String()
+}
+
+
+var jobs chan *SearchJob
+var searchResults map[string]*SearchResults
+
+type SearchJob struct {
+	Tube  string
+	Query string
+	State string
+	ID    string
+	Limit int
+}
+
+func init() {
+	// jobs
+	jobs = make(chan *SearchJob)
+	searchResults = make(map[string]*SearchResults)
+}
+
+func UserTube(userID string) string {
+	return fmt.Sprintf("mt-sms-smpp-out-%s", userID)
+}
+
+func UserTubeExist(userID string) bool {
+	 for _, server := range selfConf.Servers {
+		 if exists, err := TubeExist(server, UserTube(userID)); err != nil {
+		 	log.Printf("failed to check tube existing: %s", err)
+		 	return false
+		 } else if exists {
+		 	return true
+		 }
+	 }
+
+	 return false
+}
+
+func NewSearchInUserTubes(userID, state, searchStr string, searchLimit int) *SearchJob {
+	id, _ := uuid.NewUUID()
+	return &SearchJob{ID: id.String(), Tube: UserTube(userID), State: state, Query: searchStr, Limit: searchLimit}
+}
+
+func EnqueueSearchJob(userID, state, searchStr string, searchLimit int) (string, error) {
+	job := NewSearchInUserTubes(userID, state, searchStr, searchLimit)
+
+	jobs <- job
+
+	return job.ID, nil
+}
+
+
+type SearchResults struct {
+	Result    []SearchResult
+	ID        string
+	Status    string
+	Tube      string
+	Query     string
+	CreatedAt time.Time
+	Limit     int
+}
+
+func ProcessSearchJob(ctx context.Context) error {
+	for {
+		select {
+		case job := <-jobs:
+			searchResults[job.ID] = &SearchResults{Result: []SearchResult{}, ID: job.ID, Status: "pending", Tube: job.Tube, Query: job.Query, CreatedAt: time.Now(), Limit: job.Limit}
+
+			var results []SearchResult
+			for _, server := range selfConf.Servers {
+				if res, err := searchTubeWithReadyState(server, job.Tube, job.Limit, job.Query); err != nil {
+					log.Printf("error during job processment: %s", err)
+					continue
+				} else {
+					results = append(results, res...)
+				}
+			}
+			searchResults[job.ID].Result = results
+			searchResults[job.ID].Status = "finished"
+		case <-ctx.Done():
+			return nil
+		}
+	}
+
+	return nil
 }

@@ -12,6 +12,7 @@
 package main
 
 import (
+	"log"
 	"net/url"
 	"strconv"
 	"strings"
@@ -261,6 +262,64 @@ func clearTubes(server string, data url.Values) {
 	}
 }
 
+func searchTubeWithReadyState(server string, tube string, limit int, searchStr string) ([]SearchResult, error) {
+	return searchInTube(server, tube, limit, searchStr, "ready")
+}
+
+func searchInTube(server string, tube string, limit int, searchStr string, state string) ([]SearchResult, error) {
+	var (
+		bstkConn      *beanstalk.Conn
+		err           error
+		result        = []SearchResult{}
+		table         = currentTubeJobsSummaryTable(server, tube)
+	)
+	if table == `` {
+		return nil, nil
+	}
+
+	if bstkConn, err = beanstalk.Dial("tcp", server); err != nil {
+		return nil, err
+	}
+
+	// Get ready stat job total
+	var cnt int
+
+	defer func() {
+		bstkTube := &beanstalk.Tube{
+			Conn: bstkConn,
+			Name: tube,
+		}
+		// search is done, release all jobs
+		if _, err = bstkTube.Kick(cnt); err != nil {
+			log.Printf("failed to kick jobs: %s", err)
+		}
+
+		// all done, close conn
+		bstkConn.Close()
+	}()
+
+	bstkTubeSet := beanstalk.NewTubeSet(bstkConn, tube)
+	for {
+		if cnt >= limit {
+			break
+		}
+
+		// it reserves jobs and push to buried after it
+		ret, err := inTubeSearch(searchStr, state, bstkTubeSet)
+		if err != nil {
+			log.Printf("error during search in tube: %s\n", err)
+			break
+		}
+		if ret != nil {
+			ret.Server = server
+			result = append(result, *ret)
+			cnt++
+		}
+	}
+
+	return result, nil
+}
+
 // searchTube search job by given search string in ready, delayed and buried
 // stats.
 func searchTube(server string, tube string, limit string, searchStr string) string {
@@ -330,4 +389,41 @@ func searchTubeInStats(tube, searchStr, stat string, bstkConn *beanstalk.Conn, i
 		State: stat,
 		Data:  string(readyBody),
 	}
+}
+
+func inTubeSearch(searchStr, stat string, bstTubeSet *beanstalk.TubeSet) (*SearchResult,error) {
+	id, readyBody, err := bstTubeSet.Reserve(5 * time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	body := string(readyBody)
+	if !strings.Contains(body, searchStr) {
+		return nil, bstTubeSet.Conn.Bury(id, 10)
+	}
+
+	return &SearchResult{
+		ID:    id,
+		State: stat,
+		Data:  string(readyBody),
+	}, nil
+}
+
+func TubeExist(server, tube string) (bool, error) {
+	var (
+		bstkConn      *beanstalk.Conn
+		err           error
+	)
+
+	if bstkConn, err = beanstalk.Dial("tcp", server); err != nil {
+		return false, err
+	}
+	defer bstkConn.Close()
+
+	bstkTube := beanstalk.Tube{Conn: bstkConn, Name: tube}
+	if _, err := bstkTube.Stats(); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
