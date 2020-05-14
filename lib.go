@@ -399,7 +399,17 @@ func inTubeSearch(searchStr, stat string, bstTubeSet *beanstalk.TubeSet) (*Searc
 	if err != nil {
 		return nil, err
 	}
-	if err := bstTubeSet.Conn.Bury(id, 10); err != nil {
+	var pri uint64 = 10
+	if stat, err := bstTubeSet.Conn.StatsJob(id); err != nil {
+		return nil, err
+	} else {
+		pri, err = strconv.ParseUint(stat["pri"], 10, 32)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := bstTubeSet.Conn.Bury(id, uint32(pri)); err != nil {
 		return nil, err
 	}
 
